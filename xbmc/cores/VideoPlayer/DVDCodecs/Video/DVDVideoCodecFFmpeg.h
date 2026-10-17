@@ -98,6 +98,7 @@ protected:
   double m_DAR = 1.0;
   CDVDStreamInfo m_hints;
   CDVDCodecOptions m_options;
+  bool m_pinnedToBigCores = false;
 
   struct CDropControl
   {

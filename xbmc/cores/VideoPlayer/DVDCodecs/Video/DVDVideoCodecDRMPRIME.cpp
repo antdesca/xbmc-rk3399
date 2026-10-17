@@ -201,9 +201,13 @@ static const AVCodec* FindDecoder(CDVDStreamInfo& hints)
         return codec;
     }
 
-  codec = avcodec_find_decoder(hints.codec);
-  if (codec && (codec->capabilities & AV_CODEC_CAP_DR1) == AV_CODEC_CAP_DR1)
-    return codec;
+  if (!CServiceBroker::GetSettingsComponent()->GetSettings()->GetBool(
+          SETTING_VIDEOPLAYER_USEPRIMEDECODERFORHW))
+  {
+    codec = avcodec_find_decoder(hints.codec);
+    if (codec && (codec->capabilities & AV_CODEC_CAP_DR1) == AV_CODEC_CAP_DR1)
+      return codec;
+  }
 
   return nullptr;
 }
@@ -281,6 +285,16 @@ int CDVDVideoCodecDRMPRIME::GetBuffer(struct AVCodecContext* avctx, AVFrame* fra
 
 bool CDVDVideoCodecDRMPRIME::Open(CDVDStreamInfo& hints, CDVDCodecOptions& options)
 {
+  if (hints.bitdepth > 8 ||
+      (hints.codec == AV_CODEC_ID_HEVC && hints.profile == FF_PROFILE_HEVC_MAIN_10) ||
+      (hints.codec == AV_CODEC_ID_H264 && (hints.profile == FF_PROFILE_H264_HIGH_10 || hints.profile == FF_PROFILE_H264_HIGH_10_INTRA)) ||
+      (hints.codec == AV_CODEC_ID_VP9 && (hints.profile == FF_PROFILE_VP9_2 || hints.profile == FF_PROFILE_VP9_3)))
+  {
+    CLog::Log(LOGINFO, "CDVDVideoCodecDRMPRIME::{} - 10-bit / >8-bit video unsupported by hardware (codec={}, bitdepth={}, profile={}), falling back to software decoder",
+              __FUNCTION__, static_cast<int>(hints.codec), hints.bitdepth, hints.profile);
+    return false;
+  }
+
   const AVCodec* pCodec = FindDecoder(hints);
   if (!pCodec)
   {
@@ -367,13 +381,9 @@ bool CDVDVideoCodecDRMPRIME::Open(CDVDStreamInfo& hints, CDVDCodecOptions& optio
 
   if (avcodec_open2(m_pCodecContext, pCodec, nullptr) < 0)
   {
-    CLog::Log(LOGINFO, "CDVDVideoCodecDRMPRIME::{} - unable to open codec", __FUNCTION__);
+    CLog::Log(LOGINFO, "CDVDVideoCodecDRMPRIME::{} - unable to open codec, falling back to software decoder", __FUNCTION__);
     avcodec_free_context(&m_pCodecContext);
-    if (hints.codecOptions & CODEC_FORCE_SOFTWARE)
-      return false;
-
-    hints.codecOptions |= CODEC_FORCE_SOFTWARE;
-    return Open(hints, options);
+    return false;
   }
 
   UpdateProcessInfo(m_pCodecContext, m_pCodecContext->pix_fmt);

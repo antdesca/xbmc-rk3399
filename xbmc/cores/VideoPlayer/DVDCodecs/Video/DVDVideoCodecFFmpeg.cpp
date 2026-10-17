@@ -27,6 +27,11 @@
 #include <memory>
 #include <mutex>
 
+#if defined(TARGET_LINUX)
+#include <sched.h>
+#include <unistd.h>
+#endif
+
 extern "C" {
 #include <libavfilter/avfilter.h>
 #include <libavfilter/buffersink.h>
@@ -374,10 +379,12 @@ bool CDVDVideoCodecFFmpeg::Open(CDVDStreamInfo &hints, CDVDCodecOptions &options
   m_pCodecContext->flags = AV_CODEC_FLAG_COPY_OPAQUE;
 #endif
 
+  m_pinnedToBigCores = false;
+
   // setup threading model
   if (!(hints.codecOptions & CODEC_FORCE_SOFTWARE))
   {
-    if (m_decoderState == STATE_NONE)
+    if (m_decoderState == STATE_NONE && !CDVDFactoryCodec::GetHWAccels().empty())
     {
       m_decoderState = STATE_HW_SINGLE;
     }
@@ -480,6 +487,28 @@ void CDVDVideoCodecFFmpeg::Dispose()
   }
 
   FilterClose();
+
+#if defined(TARGET_LINUX)
+  if (m_pinnedToBigCores)
+  {
+    int cpuCount = CServiceBroker::GetCPUInfo()->GetCPUCount();
+    if (cpuCount >= 6)
+    {
+      cpu_set_t allCpus;
+      CPU_ZERO(&allCpus);
+      for (int i = 0; i < cpuCount; ++i)
+        CPU_SET(i, &allCpus);
+      sched_setaffinity(0, sizeof(cpu_set_t), &allCpus);
+
+      cpu_set_t bigCpus;
+      CPU_ZERO(&bigCpus);
+      CPU_SET(4, &bigCpus);
+      CPU_SET(5, &bigCpus);
+      sched_setaffinity(getpid(), sizeof(cpu_set_t), &bigCpus);
+    }
+    m_pinnedToBigCores = false;
+  }
+#endif
 }
 
 void CDVDVideoCodecFFmpeg::SetFilters()
@@ -575,6 +604,30 @@ bool CDVDVideoCodecFFmpeg::AddData(const DemuxPacket &packet)
 
   if (!packet.pData)
     return true;
+
+#if defined(TARGET_LINUX)
+  if (!m_pinnedToBigCores && !m_pHardware)
+  {
+    m_pinnedToBigCores = true;
+    int cpuCount = CServiceBroker::GetCPUInfo()->GetCPUCount();
+    if (cpuCount >= 6)
+    {
+      cpu_set_t videoCpu;
+      CPU_ZERO(&videoCpu);
+      CPU_SET(5, &videoCpu);
+      sched_setaffinity(0, sizeof(cpu_set_t), &videoCpu);
+
+      cpu_set_t renderCpu;
+      CPU_ZERO(&renderCpu);
+      CPU_SET(4, &renderCpu);
+      sched_setaffinity(getpid(), sizeof(cpu_set_t), &renderCpu);
+
+      CLog::Log(LOGINFO,
+                "CDVDVideoCodecFFmpeg::AddData - pinned video_thread to CPU 5 and main render "
+                "thread to CPU 4 (Cortex-A72 big cores)");
+    }
+  }
+#endif
 
   if (m_eof)
   {

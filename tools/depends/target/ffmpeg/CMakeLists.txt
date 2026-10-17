@@ -135,6 +135,9 @@ endif()
 
 list(APPEND ffmpeg_conf ${CONFIGARCH})
 
+list(APPEND ffmpeg_conf --enable-libdrm
+                        --enable-libudev
+                        --enable-v4l2-request)
 message(STATUS "FFMPEG_CONF: ${ffmpeg_conf}")
 
 set(MAKE_COMMAND $(MAKE))
@@ -147,9 +150,16 @@ if(CMAKE_GENERATOR STREQUAL Ninja)
   endif()
 endif()
 
+if(NOT DEFINED PROJECTSOURCE)
+  set(PROJECTSOURCE "/workspace/xbmc")
+endif()
+set(FFMPEG_PATCH_DIR "${PROJECTSOURCE}/tools/depends/target/ffmpeg/6.0.1")
+set(FFMPEG_PATCH_CMD bash -c "grep -q v4l2_request <SOURCE_DIR>/configure || (patch -p1 -d <SOURCE_DIR> < ${FFMPEG_PATCH_DIR}/ffmpeg-001-v4l2-request.patch && patch -p1 -d <SOURCE_DIR> < ${FFMPEG_PATCH_DIR}/ffmpeg-001-v4l2-drmprime.patch && patch -p1 -d <SOURCE_DIR> < ${FFMPEG_PATCH_DIR}/ffmpeg-001-vf-deinterlace-v4l2m2m.patch)")
+
 include(ExternalProject)
 externalproject_add(ffmpeg
                     SOURCE_DIR ${CMAKE_SOURCE_DIR}
+                    PATCH_COMMAND ${FFMPEG_PATCH_CMD}
                     CONFIGURE_COMMAND ${pkgconf} ${pkgconf_path} <SOURCE_DIR>/configure
                       --prefix=${CMAKE_INSTALL_PREFIX}
                       --extra-version="kodi-${FFMPEG_VER}"
